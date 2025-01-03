@@ -1,74 +1,67 @@
 package main
 
 import (
-	"bytes"
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
+	"log"
+	"time"
+
+	recommendationengine "cloud.google.com/go/recommendationengine/apiv1"
+	recommendationpb "google.golang.org/genproto/googleapis/cloud/recommendationengine/v1beta1"
 )
 
-// Fetches recommendations for a given user and product using Google's Recommendations AI API.
-func getRecommendations(userID string, productID string) (string, error) {
-	// URL for the Recommendations AI API
-	url := "https://recommendationengine.googleapis.com/v1beta1/projects/[PROJECT_ID]/locations/global/catalogs/default_catalog/branches/default_branch/recommendations:predict"
+// getRecommendations fetches recommendations for a specific user and context.
+func getRecommendations(projectID, eventStoreID, placement string, userID string) {
+	ctx := context.Background()
 
-	// Payload to send to the API
-	// This defines the user event for which recommendations are being fetched.
-	payload := map[string]interface{}{
-		"userEvent": map[string]interface{}{
-			"visitorId": userID,      // Unique identifier for the user.
-			"eventType": "page-view", // Event type, such as viewing a product or adding to cart.
-			"eventDetail": map[string]interface{}{
-				"productID": productID, // The ID of the product related to this event.
+	// Create a recommendation engine client
+	client, err := recommendationengine.NewPredictionApiClient(ctx)
+	if err != nil {
+		log.Fatalf("Failed to create client: %v", err)
+	}
+	defer client.Close()
+
+	// Specify the full resource name of the placement
+	placementName := fmt.Sprintf(
+		"projects/%s/locations/global/catalogs/default_catalog/eventStores/%s/placements/%s", 
+		projectID, eventStoreID, placement,
+	)
+
+	// Create the predict request
+	req := &recommendationpb.PredictRequest{
+		Placement: placementName,
+		UserEvent: &recommendationpb.UserEvent{
+			EventType: "detail-page-view", // Example: user views a product
+			UserInfo: &recommendationpb.UserInfo{
+				userId: userID,
+			},
+			EventTime: &recommendationpb.Timestamp{
+				Seconds: time.Now().Unix(),
 			},
 		},
+		PageSize: 5, // Number of recommendations to return
 	}
-	// Convert the payload to JSON format
-	payloadBytes, err := json.Marshal(payload)
+
+	// Call the predictions API
+	resp, err := client.Predict(ctx, req)
 	if err != nil {
-		return "", err
+		log.Fatalf("Failed to predict: %v", err)
 	}
 
-	// Create a new HTTP POST request
-	req, err := http.NewRequest("POST", url, bytes.NewBuffer(payloadBytes))
-	if err != nil {
-		return "", err
+	// Print the recommendations
+	fmt.Println("Recommendations:")
+	for _, result := range resp.Results {
+		fmt.Printf("- Item ID: %s\n", result.Id)
 	}
-
-	// Set the content type header to indicate JSON payload
-	req.Header.Set("Content-Type", "application/json")
-
-	// Initialize an HTTP client to send the request
-	client := &http.Client{}
-
-	// Send the request and receive a response
-	rep, err := client.Do(req)
-	if err != nil {
-		return "", err
-	}
-	defer rep.Body.Close() // Ensure the response body is closed to free resources
-
-	// Decode the JSON response into a map for processing
-	var result map[string]interface{}
-	json.NewDecoder(rep.Body).Decode(&result)
-
-	// Convert the result into a string for now; adapt this based on your application's needs
-	return fmt.Sprintf("Recommendation: %v", result), nil
 }
 
 func main() {
-	// Example user and product IDs to test the API
-	userID := "user1234"
-	productID := "product123"
+	// Example variables (replace with your actual values)
+	projectID := "your-project-id"
+	eventStoreID := "your-event-store-id"
+	placement := "your-placement"
+	userID := "your-user-id"
 
-	// Call the getRecommendations function to fetch recommendations
-	recommendation, err := getRecommendations(userID, productID)
-	if err != nil {
-		// Print an error message if the API call fails
-		fmt.Println("Error:", err)
-		return
-	}
-
-	// Print the recommendation response
-	fmt.Println(recommendation)
+	// Fetch and display recommendations
+	getRecommendations(projectID, eventStoreID, placement, userID)
 }
